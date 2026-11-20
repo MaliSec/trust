@@ -1,0 +1,37 @@
+:root {
+  --bg: #ffffff; --fg: #1b1f24; --muted: #59636e; --line: #d1d9e0; --code: #f6f8fa; --link: #0969da;
+  --critical: #a40e26; --high: #bc4c00; --medium: #9a6700; --low: #1a7f37; --negligible: #59636e; --kev: #6e2fbf;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #30363d; --code: #161b22; --link: #4493f8;
+    --critical: #ff7b72; --high: #ffa657; --medium: #d29922; --low: #3fb950; --negligible: #9198a1; --kev: #d2a8ff;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header, main, footer { max-width: 72rem; margin: 0 auto; padding: 0 16px; }
+header { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; align-items: baseline;
+  padding-top: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line); }
+header nav a { margin-left: 1rem; }
+.brand { font-weight: 600; color: var(--fg); }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1 { margin-top: 1.5rem; }
+h2 small { color: var(--muted); font-weight: 400; font-size: 0.8em; }
+section { border-top: 1px solid var(--line); margin-top: 2rem; }
+code, pre { font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre { background: var(--code); padding: 0.75rem; overflow-x: auto; border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 0.4rem 0.75rem 0.4rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; }
+dt { color: var(--muted); }
+dd { margin: 0; overflow-wrap: anywhere; }
+.sev { font-weight: 600; white-space: nowrap; }
+.critical { color: var(--critical); } .high { color: var(--high); } .medium { color: var(--medium); }
+.low { color: var(--low); } .negligible, .unknown { color: var(--negligible); } .kev { color: var(--kev); }
+.none, .note { color: var(--muted); }
+.tag { font-size: 0.75em; padding: 0.05rem 0.4rem; border: 1px solid var(--line); border-radius: 1rem; }
+footer { color: var(--muted); font-size: 0.85em; margin-top: 3rem; padding-bottom: 2rem; border-top: 1px solid var(--line); }

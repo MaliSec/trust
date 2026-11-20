@@ -1,0 +1,79 @@
+# trust-center: rebuild the site from Temper's signed releases, rescan the
+# newest release's images against today's scanner databases, and publish
+# to GitHub Pages. Runs after temper-nightly has released, and on demand.
+#
+# Actions are pinned to commit SHAs; the comment beside each names the release.
+name: trust-center
+
+on:
+  schedule:
+    - cron: '47 4 * * *'   # daily, 04:47 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trust-center
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_REPO: MaliSec/temper
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Temper's install-tools.sh pins the scanner versions its releases use.
+      - name: Checkout Temper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: MaliSec/temper
+          path: temper
+
+      - name: Install cosign, grype and trivy
+        run: |
+          TOOLS="cosign grype trivy" ./temper/scripts/install-tools.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Test and build
+        run: |
+          go vet ./...
+          go test ./...
+          go build -o bin/trust ./cmd/trust
+
+      - name: Fetch and verify releases
+        run: ./bin/trust fetch -repo "$SOURCE_REPO" -data data/temper
+
+      - name: Rescan the newest release
+        run: ./bin/trust rescan -repo "$SOURCE_REPO" -data data/temper
+
+      - name: Render
+        run: ./bin/trust build -repo "$SOURCE_REPO" -data data/temper -out site
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write      # publish the site
+      id-token: write   # the deployment's identity
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

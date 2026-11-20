@@ -1,0 +1,8 @@
+{{define "releases.html"}}{{template "head" .}}
+<h1>Releases</h1>
+<table>
+<thead><tr><th>Release</th><th>Cut</th><th>Commit</th><th>Images</th></tr></thead>
+<tbody>{{range .Data}}
+<tr><td><a href="{{.Tag}}.html">{{.Tag}}</a></td><td>{{.CutAt}}</td><td><code>{{short .Commit}}</code></td><td>{{len .Entries}}</td></tr>{{end}}
+</tbody></table>
+{{template "foot" .}}{{end}}

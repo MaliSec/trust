@@ -1,0 +1,34 @@
+{{define "image.html"}}{{template "head" .}}{{$img := .Data}}{{$site := .Site}}
+<h1>{{$img.Name}}{{if $img.FIPS}} <span class="tag fips">FIPS</span>{{end}}</h1>
+<p><code>{{$img.Repository}}</code> · <a href="https://github.com/{{$site.SourceRepo}}/tree/main/images/{{$img.Name}}">README</a>{{if $img.FIPS}} ·
+the cryptography runs in the Go Cryptographic Module
+(<a href="https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/5247">CMVP #5247</a>);
+<a href="https://github.com/{{$site.SourceRepo}}/tree/main/providers/gofips/docs/audit">audit pack</a>{{end}}</p>
+{{range $img.Entries}}
+<section id="{{if .Line}}line-{{.Line}}{{else}}current{{end}}">
+<h2>{{$img.Name}}{{if .Line}}:{{.Line}}{{end}} <small>release {{.Release}}</small></h2>
+<dl>
+  <dt>Tags</dt><dd>{{range .Tags}}<code>{{.}}</code> {{end}}</dd>
+  <dt>Digest</dt><dd><code>{{.Digest}}</code></dd>
+  <dt>Platforms</dt><dd>{{range $arch, $d := .Platforms}}{{$arch}} <code>{{short $d}}</code> {{end}}</dd>
+</dl>
+<pre><code>docker pull {{$img.Repository}}@{{.Digest}}
+gh attestation verify oci://{{$img.Repository}}@{{.Digest}} --repo {{$site.SourceRepo}}</code></pre>
+<p class="note">Full verification, including the signed release manifest:
+<a href="https://github.com/{{$site.SourceRepo}}/blob/main/docs/verifying.md">docs/verifying.md</a>.</p>
+
+<h3>Findings now {{if $site.Rescan}}{{template "counts" .NowCount}}{{end}}</h3>
+{{if $site.Rescan}}{{template "findings" .Now}}{{else}}<p class="none">Not yet rescanned.</p>{{end}}
+
+<h3>At release {{template "counts" .AtReleaseCount}}</h3>
+{{if .AtReleaseDetail}}{{template "findings" .AtRelease}}{{else}}<p class="note">This release recorded counts only; findings are listed from {{$site.Project}} releases that publish a scans file.</p>{{end}}
+
+<h3>History</h3>
+<table>
+<thead><tr><th>Release</th><th>Digest</th><th>At release</th></tr></thead>
+<tbody>{{range .History}}
+<tr><td><a href="../releases/{{.Release}}.html">{{.Release}}</a></td><td><code>{{short .Digest}}</code></td><td>{{template "counts" .Count}}</td></tr>{{end}}
+</tbody></table>
+</section>
+{{end}}
+{{template "foot" .}}{{end}}

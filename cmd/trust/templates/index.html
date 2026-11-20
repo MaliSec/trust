@@ -1,0 +1,16 @@
+{{define "index.html"}}{{template "head" .}}
+<h1>Images</h1>
+<p>Every image in the current release, {{(index .Site.Releases 0).Tag}}, with
+its scanner findings: as of the latest rescan, and at release time. Every
+release is signed; each image page shows how to verify it.</p>
+<table>
+<thead><tr><th>Image</th><th>Digest</th><th>Findings now</th><th>At release</th></tr></thead>
+<tbody>{{range .Site.Images}}{{$img := .}}{{range .Entries}}
+<tr><td><a href="images/{{$img.Name}}.html{{if .Line}}#line-{{.Line}}{{end}}">{{$img.Name}}{{if .Line}}:{{.Line}}{{end}}</a>{{if $img.FIPS}} <span class="tag fips">FIPS</span>{{end}}</td>
+<td><code>{{short .Digest}}</code></td>
+<td>{{if $.Site.Rescan}}{{template "counts" .NowCount}}{{else}}<span class="none">not yet rescanned</span>{{end}}</td>
+<td>{{template "counts" .AtReleaseCount}}</td></tr>{{end}}{{end}}
+</tbody></table>
+<p class="note">Counts are distinct vulnerabilities per package, across
+both platforms and both scanners (Grype and Trivy).</p>
+{{template "foot" .}}{{end}}

@@ -1,0 +1,41 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · {{.Site.Project}} trust center</title>
+<link rel="stylesheet" href="{{.Root}}style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="{{.Root}}index.html">{{.Site.Project}} trust center</a>
+  <nav><a href="{{.Root}}index.html">Images</a> <a href="{{.Root}}releases/index.html">Releases</a> <a href="{{.Root}}api/index.json">JSON</a></nav>
+</header>
+<main>
+{{end}}
+
+{{define "foot"}}
+</main>
+<footer>
+  <p>Built {{.Site.GeneratedAt}} from signed releases of
+  <a href="https://github.com/{{.Site.SourceRepo}}">{{.Site.SourceRepo}}</a>.
+  {{with .Site.Rescan}}Current findings: rescanned {{.ScannedAt}} with
+  {{range $name, $s := .Scanners}}{{$name}} {{$s.Version}} ({{$s.DB}}); {{end}}{{end}}</p>
+  <p>Scanners check the packages in each image's SBOM; files that no package
+  installed are not scanned.</p>
+</footer>
+</body>
+</html>
+{{end}}
+
+{{define "counts"}}<span class="counts">{{if .KEV}}<b class="sev kev">{{.KEV}} KEV</b> {{end}}{{if .Critical}}<b class="sev critical">{{.Critical}} C</b> {{end}}{{if .High}}<b class="sev high">{{.High}} H</b> {{end}}{{if .Medium}}<b class="sev medium">{{.Medium}} M</b> {{end}}{{if .Low}}<b class="sev low">{{.Low}} L</b> {{end}}{{if .Negligible}}<b class="sev negligible">{{.Negligible}} N</b> {{end}}{{if .Unknown}}<b class="sev unknown">{{.Unknown}} ?</b> {{end}}{{if not .Total}}<span class="none">none</span>{{end}}</span>{{end}}
+
+{{define "findings"}}{{if .}}
+<table class="findings">
+<thead><tr><th>Vulnerability</th><th>Severity</th><th>Package</th><th>Fix</th><th>Platforms</th><th>Found by</th></tr></thead>
+<tbody>{{range .}}
+<tr><td><a href="{{cveURL .ID}}">{{.ID}}</a>{{if .KEV}} <b class="sev kev">KEV</b>{{end}}</td>
+<td><span class="sev {{.Severity}}">{{.Severity}}</span></td>
+<td><code>{{.Package}} {{.Version}}</code></td><td>{{.Fix}}</td>
+<td>{{join .Platforms ", "}}</td><td>{{join .Scanners ", "}}</td></tr>{{end}}
+</tbody></table>{{else}}<p class="none">No findings.</p>{{end}}{{end}}
