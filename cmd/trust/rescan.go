@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -86,8 +87,17 @@ func rescan(ctx context.Context, src Source, data string, jobs int) error {
 	if len(ts) == 0 {
 		return fmt.Errorf("release %s lists no platform images", current.Tag)
 	}
-	// The first verification alone: gh downloads and caches Sigstore's
-	// trust root on first use, and parallel first uses collide on that cache.
+	// Sigstore's trust root, fetched once (gh verifies it through TUF) and
+	// given to every verification, so none fetches it again.
+	root, err := retryVerifier(ctx, "attestation", "trusted-root")
+	if err != nil {
+		return fmt.Errorf("Sigstore trusted root: %w", err)
+	}
+	trustedRoot = filepath.Join(sboms, "trusted_root.jsonl")
+	if err := os.WriteFile(trustedRoot, root, 0o644); err != nil {
+		return err
+	}
+	// The first verification alone, then the rest in parallel.
 	if err := sbomAndGrype(ctx, src, ts[0], sboms, out); err != nil {
 		return err
 	}
@@ -140,26 +150,39 @@ func rescan(ctx context.Context, src Source, data string, jobs int) error {
 	return writeRescanMeta(ctx, out, current.Tag)
 }
 
-func sbomPath(dir string, t target) string { return filepath.Join(dir, t.name+"."+t.arch+".spdx.json") }
+// trustedRoot: the Sigstore trusted root every SBOM verification uses.
+var trustedRoot string
 
-func sbomAndGrype(ctx context.Context, src Source, t target, sboms, out string) error {
-	args := []string{"attestation", "verify", "oci://" + t.repo + "@" + t.digest, "-R", src.Repo,
-		"--signer-workflow", src.Repo + "/" + src.SignerWorkflow, "--predicate-type", sbomPredicate, "--format", "json"}
+// verifierErrors: gh failing to set up a Sigstore verifier, before any
+// verification is attempted. These are retried; a failed verification is not.
+var verifierErrors = []string{
+	"no valid Sigstore verifiers could be initialized",
+	"verifier is not available",
+}
+
+func retryVerifier(ctx context.Context, args ...string) ([]byte, error) {
 	var res []byte
 	var err error
-	// A verifier that cannot initialise (trust root or registry unreachable
-	// for a moment) is retried; a failed verification is not.
-	for attempt := 1; attempt <= 3; attempt++ {
+	for attempt := 1; attempt <= 4; attempt++ {
 		res, err = command(ctx, "gh", args...)
-		if err == nil || !strings.Contains(err.Error(), "no valid Sigstore verifiers could be initialized") {
-			break
+		if err == nil || !slices.ContainsFunc(verifierErrors, func(m string) bool { return strings.Contains(err.Error(), m) }) {
+			return res, err
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-time.After(time.Duration(attempt) * 5 * time.Second):
 		}
 	}
+	return res, err
+}
+
+func sbomPath(dir string, t target) string { return filepath.Join(dir, t.name+"."+t.arch+".spdx.json") }
+
+func sbomAndGrype(ctx context.Context, src Source, t target, sboms, out string) error {
+	res, err := retryVerifier(ctx, "attestation", "verify", "oci://"+t.repo+"@"+t.digest, "-R", src.Repo,
+		"--signer-workflow", src.Repo+"/"+src.SignerWorkflow, "--predicate-type", sbomPredicate,
+		"--custom-trusted-root", trustedRoot, "--format", "json")
 	if err != nil {
 		return fmt.Errorf("no verified SBOM for %s/%s (%s): %w", t.name, t.arch, t.digest, err)
 	}
