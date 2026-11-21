@@ -1,0 +1,66 @@
+# test: check every pull request, and main after each merge. The main
+# branch ruleset requires both jobs.
+#
+# Actions are pinned to commit SHAs; the comment beside each names the release.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Format, vet, test and build
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "not gofmt-formatted: $unformatted" >&2; exit 1; fi
+          go vet ./...
+          go test ./...
+          go build -o bin/trust ./cmd/trust
+
+  dco:
+    name: DCO sign-off
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Every commit carries a Signed-off-by trailer
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "refs/heads/$BASE_REF"
+          BASE_SHA=$(git merge-base FETCH_HEAD "$HEAD_SHA")
+          missing=0
+          for c in $(git rev-list --no-merges "$BASE_SHA..$HEAD_SHA"); do
+            if ! git log -1 --format=%B "$c" | grep -qE '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "missing Signed-off-by: $(git log -1 --format='%h %s' "$c")" >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" != 0 ]; then
+            echo "Sign off each commit with 'git commit -s'." >&2
+            exit 1
+          fi
+          echo "DCO: every commit is signed off"
