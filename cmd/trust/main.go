@@ -79,7 +79,14 @@ func run(data, out, project, repo string, now time.Time) error {
 	}
 	s := build(project, repo, now.Format(time.RFC3339), releases, rescan)
 
-	tpl, err := template.New("").Funcs(funcs).ParseFS(assets, "templates/*.html")
+	fm := template.FuncMap{
+		// The VEX statements for a vulnerability, in the source repository.
+		"vexURL": func(id string) string { return "https://github.com/" + repo + "/blob/main/vex/" + id + ".json" },
+	}
+	for k, v := range funcs {
+		fm[k] = v
+	}
+	tpl, err := template.New("").Funcs(fm).ParseFS(assets, "templates/*.html")
 	if err != nil {
 		return err
 	}
@@ -197,7 +204,11 @@ var funcs = template.FuncMap{
 		return d
 	},
 	"join": strings.Join,
-	"tag":  func(repo, tag string) string { return repo + ":" + tag },
+	"vexLabel": func(status string) string {
+		return map[string]string{"fixed": "fixed", "not_affected": "not affected",
+			"affected": "affected", "under_investigation": "under investigation"}[status]
+	},
+	"tag": func(repo, tag string) string { return repo + ":" + tag },
 	"cveURL": func(id string) string {
 		switch {
 		case strings.HasPrefix(id, "CVE-"):

@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +24,7 @@ type Manifest struct {
 	ScanDBTrivy string                   `yaml:"scan_db_trivy"`
 	Scans       string                   `yaml:"scans"`
 	ScansSHA256 string                   `yaml:"scans_sha256"`
+	VEXSHA256   string                   `yaml:"vex_sha256"`
 	Images      map[string]ManifestImage `yaml:"images"`
 }
 
@@ -68,13 +71,90 @@ type RawFinding struct {
 	FixState string   `json:"fix_state,omitempty"`
 	Status   string   `json:"status,omitempty"`
 	FixedIn  []string `json:"fixed_in"`
+	VEX      *VEXInfo `json:"vex,omitempty"`
+}
+
+// VEXInfo is the project's statement on a finding: OpenVEX status and the
+// justification and text that go with it.
+type VEXInfo struct {
+	Status        string `json:"status"`
+	Justification string `json:"justification,omitempty"`
+	Impact        string `json:"impact_statement,omitempty"`
+	Action        string `json:"action_statement,omitempty"`
+	Notes         string `json:"status_notes,omitempty"`
+}
+
+// Reviewed: the project has shown the image is not exposed (fixed in the
+// shipped package, or not affected).
+func (v *VEXInfo) Reviewed() bool {
+	return v != nil && (v.Status == "fixed" || v.Status == "not_affected")
+}
+
+// Text is the statement's explanation, whichever field carries it.
+func (v *VEXInfo) Text() string {
+	if v == nil {
+		return ""
+	}
+	for _, s := range []string{v.Impact, v.Action, v.Notes} {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// VEXDoc is a release's temper-<release>.vex.json (Temper's scripts/vex-merge.sh).
+type VEXDoc struct {
+	Statements []struct {
+		Vulnerability struct {
+			Name string `json:"name"`
+		} `json:"vulnerability"`
+		Products []struct {
+			ID            string `json:"@id"`
+			Subcomponents []struct {
+				ID string `json:"@id"`
+			} `json:"subcomponents"`
+		} `json:"products"`
+		VEXInfo
+	} `json:"statements"`
+}
+
+// lookup returns the statement covering a finding: same vulnerability (or
+// one of its aliases), the image's repository, and the finding's Wolfi
+// package at its exact version. It matches Temper's scripts/scans-json.sh.
+func (d *VEXDoc) lookup(repository string, f RawFinding) *VEXInfo {
+	if d == nil || (f.Package.Type != "apk" && f.Package.Type != "wolfi") {
+		return nil
+	}
+	product := "pkg:oci/" + path.Base(repository) + "?repository_url=" + repository
+	sub := "pkg:apk/wolfi/" + f.Package.Name + "@" + f.Package.Version
+	ids := append([]string{f.ID}, f.Related...)
+	for i := range d.Statements {
+		s := &d.Statements[i]
+		if !slices.Contains(ids, s.Vulnerability.Name) {
+			continue
+		}
+		for _, p := range s.Products {
+			if p.ID != product {
+				continue
+			}
+			for _, c := range p.Subcomponents {
+				if c.ID == sub {
+					v := s.VEXInfo
+					return &v
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // Release is one verified release on disk: releases/<tag>/.
 type Release struct {
 	Tag      string
 	Manifest Manifest
-	Scans    *Scans // nil: the release predates scans files
+	Scans    *Scans  // nil: the release predates scans files
+	VEX      *VEXDoc // nil: the release predates VEX files
 }
 
 var releaseTag = regexp.MustCompile(`^\d{4}\.\d{2}\.\d{2}(\.[1-9]\d*)?$`)
@@ -102,6 +182,14 @@ func loadReleases(dir string) ([]Release, error) {
 			r.Scans = &Scans{}
 			if err := json.Unmarshal(b, r.Scans); err != nil {
 				return nil, fmt.Errorf("%s: scans: %w", e.Name(), err)
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if b, err := os.ReadFile(filepath.Join(base, "vex.json")); err == nil {
+			r.VEX = &VEXDoc{}
+			if err := json.Unmarshal(b, r.VEX); err != nil {
+				return nil, fmt.Errorf("%s: vex: %w", e.Name(), err)
 			}
 		} else if !os.IsNotExist(err) {
 			return nil, err

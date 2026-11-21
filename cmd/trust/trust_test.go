@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -107,12 +108,13 @@ func TestSignerIdentity(t *testing.T) {
 	}
 }
 
-// verifyRelease refuses an unsigned or unverifiable manifest, a missing or
-// altered scans file the manifest records, and ignores one it does not.
+// verifyRelease refuses an unsigned or unverifiable manifest, and a missing
+// or altered scans or VEX file the manifest records; it ignores one the
+// manifest does not record.
 func TestVerifyRelease(t *testing.T) {
 	src := Source{Repo: "MaliSec/temper", SignerWorkflow: "w.yml"}
-	scans := []byte(`{"schema": 1}`)
-	sum := sha256.Sum256(scans)
+	body := []byte(`{"schema": 2}`)
+	sum := sha256.Sum256(body)
 	good := hex.EncodeToString(sum[:])
 
 	cosignOK := true
@@ -128,43 +130,106 @@ func TestVerifyRelease(t *testing.T) {
 
 	for _, c := range []struct {
 		name               string
-		sha                string // scans_sha256 in the manifest; "" = none
-		bundle, scansFile  bool
-		scansBody          []byte
-		cosign             bool
-		wantKeep, wantFail bool
+		scansSHA, vexSHA   string // recorded in the manifest; "" = none
+		bundle, cosign     bool
+		scansFile, vexFile []byte // nil = absent
+		want               kept
+		wantFail           bool
 	}{
-		{name: "verified with scans", sha: good, bundle: true, scansFile: true, scansBody: scans, cosign: true, wantKeep: true},
-		{name: "no scans recorded", bundle: true, scansFile: true, scansBody: scans, cosign: true},
-		{name: "no bundle", sha: good, scansFile: true, scansBody: scans, cosign: true, wantFail: true},
-		{name: "bad signature", sha: good, bundle: true, scansFile: true, scansBody: scans, wantFail: true},
-		{name: "scans missing", sha: good, bundle: true, cosign: true, wantFail: true},
-		{name: "scans altered", sha: good, bundle: true, scansFile: true, scansBody: []byte(`{"schema": 2}`), cosign: true, wantFail: true},
+		{name: "verified with scans and vex", scansSHA: good, vexSHA: good, bundle: true, cosign: true, scansFile: body, vexFile: body, want: kept{true, true}},
+		{name: "nothing recorded", bundle: true, cosign: true, scansFile: body, vexFile: body},
+		{name: "scans only", scansSHA: good, bundle: true, cosign: true, scansFile: body, vexFile: body, want: kept{scans: true}},
+		{name: "no bundle", scansSHA: good, cosign: true, scansFile: body, wantFail: true},
+		{name: "bad signature", scansSHA: good, bundle: true, scansFile: body, wantFail: true},
+		{name: "scans missing", scansSHA: good, bundle: true, cosign: true, wantFail: true},
+		{name: "scans altered", scansSHA: good, bundle: true, cosign: true, scansFile: []byte(`{}`), wantFail: true},
+		{name: "vex missing", vexSHA: good, bundle: true, cosign: true, wantFail: true},
+		{name: "vex altered", vexSHA: good, bundle: true, cosign: true, vexFile: []byte(`{}`), wantFail: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
 			m := filepath.Join(dir, "m.yaml")
-			body := "cut_at: \"x\"\n"
-			if c.sha != "" {
-				body += "scans_sha256: \"" + c.sha + "\"\n"
+			mb := "cut_at: \"x\"\n"
+			if c.scansSHA != "" {
+				mb += "scans_sha256: \"" + c.scansSHA + "\"\n"
 			}
-			must(t, os.WriteFile(m, []byte(body), 0o644))
+			if c.vexSHA != "" {
+				mb += "vex_sha256: \"" + c.vexSHA + "\"\n"
+			}
+			must(t, os.WriteFile(m, []byte(mb), 0o644))
 			if c.bundle {
 				must(t, os.WriteFile(m+".sigstore.json", []byte("{}"), 0o644))
 			}
-			s := filepath.Join(dir, "s.json")
-			if c.scansFile {
-				must(t, os.WriteFile(s, c.scansBody, 0o644))
+			s, v := filepath.Join(dir, "s.json"), filepath.Join(dir, "v.json")
+			if c.scansFile != nil {
+				must(t, os.WriteFile(s, c.scansFile, 0o644))
+			}
+			if c.vexFile != nil {
+				must(t, os.WriteFile(v, c.vexFile, 0o644))
 			}
 			cosignOK = c.cosign
-			keep, err := verifyRelease(context.Background(), src, "2026.11.21", m, s)
-			if (err != nil) != c.wantFail || keep != c.wantKeep {
-				t.Fatalf("keep=%v err=%v", keep, err)
+			got, err := verifyRelease(context.Background(), src, "2026.11.21", m, s, v)
+			if (err != nil) != c.wantFail || got != c.want {
+				t.Fatalf("kept=%+v err=%v", got, err)
 			}
 			if c.bundle && !slices.Contains(gotArgs, src.signerIdentity("2026.11.21")) {
 				t.Fatalf("cosign not called with the release identity: %v", gotArgs)
 			}
 		})
+	}
+}
+
+// A statement covers a finding only for its vulnerability (or an alias),
+// the image's repository, and the exact Wolfi package version.
+func TestVEXLookup(t *testing.T) {
+	var doc VEXDoc
+	must(t, json.Unmarshal([]byte(`{"statements": [{"vulnerability": {"name": "CVE-1"}, "status": "fixed", "status_notes": "n",
+	  "products": [{"@id": "pkg:oci/node?repository_url=ghcr.io/malisec/temper/node",
+	                "subcomponents": [{"@id": "pkg:apk/wolfi/glibc-2.44@2.44-r24"}]}]}]}`), &doc))
+	f := raw("CVE-1", "medium", "glibc-2.44", "2.44-r24")
+	f.Package.Type = "apk"
+	if v := doc.lookup("ghcr.io/malisec/temper/node", f); v == nil || v.Status != "fixed" || v.Text() != "n" {
+		t.Fatalf("lookup = %+v", v)
+	}
+	alias := f
+	alias.ID, alias.Related = "GHSA-x", []string{"CVE-1"}
+	other := f
+	other.Package.Version = "2.44-r25"
+	npm := f
+	npm.Package.Type = "npm"
+	for name, c := range map[string]struct {
+		repo string
+		f    RawFinding
+		want bool
+	}{
+		"alias":           {"ghcr.io/malisec/temper/node", alias, true},
+		"other version":   {"ghcr.io/malisec/temper/node", other, false},
+		"other image":     {"ghcr.io/malisec/temper/python", f, false},
+		"not a Wolfi apk": {"ghcr.io/malisec/temper/node", npm, false},
+	} {
+		if got := doc.lookup(c.repo, c.f) != nil; got != c.want {
+			t.Errorf("%s: matched = %v", name, got)
+		}
+	}
+	var none *VEXDoc
+	if none.lookup("ghcr.io/malisec/temper/node", f) != nil {
+		t.Error("a release without a VEX file matched")
+	}
+}
+
+// A finding a statement shows is fixed or not affected is counted as
+// reviewed, not by severity, sorts after open findings, and does not say
+// "no fix yet".
+func TestReviewedFindings(t *testing.T) {
+	fixed := raw("CVE-1", "high", "glibc-2.44", "2.44-r24")
+	fixed.VEX = &VEXInfo{Status: "fixed", Notes: "n"}
+	open := raw("CVE-2", "low", "zlib", "1.3")
+	fs := group(map[string]map[string][]RawFinding{"amd64": {"grype": {fixed, open}}})
+	if fs[0].ID != "CVE-2" || fs[1].VEX == nil || fs[1].Fix != "fixed in the shipped package" {
+		t.Fatalf("rows = %+v", fs)
+	}
+	if c := count(fs); c.High != 0 || c.Low != 1 || c.Reviewed != 1 || c.Total() != 1 {
+		t.Errorf("count = %+v", c)
 	}
 }
 

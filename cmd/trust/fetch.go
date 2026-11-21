@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -66,11 +67,12 @@ func fetchRelease(ctx context.Context, src Source, data, tag string) error {
 	defer os.RemoveAll(tmp)
 	m := src.Prefix + "-" + tag + ".manifest.yaml"
 	s := src.Prefix + "-" + tag + ".scans.json"
+	v := src.Prefix + "-" + tag + ".vex.json"
 	if _, err := command(ctx, "gh", "release", "download", tag, "-R", src.Repo, "-D", tmp,
-		"-p", m, "-p", m+".sigstore.json", "-p", s); err != nil {
+		"-p", m, "-p", m+".sigstore.json", "-p", s, "-p", v); err != nil {
 		return err
 	}
-	scans, err := verifyRelease(ctx, src, tag, filepath.Join(tmp, m), filepath.Join(tmp, s))
+	keep, err := verifyRelease(ctx, src, tag, filepath.Join(tmp, m), filepath.Join(tmp, s), filepath.Join(tmp, v))
 	if err != nil {
 		return fmt.Errorf("%s: %w", tag, err)
 	}
@@ -88,50 +90,73 @@ func fetchRelease(ctx context.Context, src Source, data, tag string) error {
 		}
 	}
 	note := ""
-	if scans {
-		if err := os.Rename(filepath.Join(tmp, s), filepath.Join(dir, "scans.json")); err != nil {
+	for _, r := range []struct {
+		keep     bool
+		from, to string
+	}{{keep.scans, s, "scans.json"}, {keep.vex, v, "vex.json"}} {
+		if !r.keep {
+			continue
+		}
+		if err := os.Rename(filepath.Join(tmp, r.from), filepath.Join(dir, r.to)); err != nil {
 			return err
 		}
-		note = ", with scans"
+		note += ", " + strings.TrimSuffix(r.to, ".json")
 	}
 	fmt.Printf("fetch: %s verified%s\n", tag, note)
 	return nil
 }
 
-// verifyRelease checks the manifest's signature and, when the manifest
-// records one, the scans file's sha256. It reports whether the scans file
-// is to be kept: a scans file the manifest does not record is not covered
-// by the signature and is ignored.
-func verifyRelease(ctx context.Context, src Source, tag, manifest, scans string) (bool, error) {
+// kept: which of a release's optional files are covered by its manifest
+// signature, and so used.
+type kept struct{ scans, vex bool }
+
+// verifyRelease checks the manifest's signature and, for each file whose
+// sha256 the manifest records (scans, VEX), that the file is there and
+// matches. A file the manifest does not record is not covered by the
+// signature and is not kept.
+func verifyRelease(ctx context.Context, src Source, tag, manifest, scans, vex string) (kept, error) {
 	if _, err := os.Stat(manifest + ".sigstore.json"); err != nil {
-		return false, fmt.Errorf("no signed manifest")
+		return kept{}, fmt.Errorf("no signed manifest")
 	}
 	if _, err := command(ctx, "cosign", "verify-blob", "--bundle", manifest+".sigstore.json",
 		"--certificate-identity-regexp", src.signerIdentity(tag),
 		"--certificate-oidc-issuer", oidcIssuer, manifest); err != nil {
-		return false, fmt.Errorf("manifest signature does not verify: %w", err)
+		return kept{}, fmt.Errorf("manifest signature does not verify: %w", err)
 	}
 	b, err := os.ReadFile(manifest)
 	if err != nil {
-		return false, err
+		return kept{}, err
 	}
 	var mf Manifest
 	if err := yaml.Unmarshal(b, &mf); err != nil {
-		return false, fmt.Errorf("manifest: %w", err)
+		return kept{}, fmt.Errorf("manifest: %w", err)
 	}
-	if mf.ScansSHA256 == "" {
+	var k kept
+	if k.scans, err = recorded(scans, "scans", mf.ScansSHA256); err != nil {
+		return kept{}, err
+	}
+	if k.vex, err = recorded(vex, "VEX", mf.VEXSHA256); err != nil {
+		return kept{}, err
+	}
+	return k, nil
+}
+
+// recorded: whether a file the manifest may record (by sha256) is to be
+// kept, and an error if the manifest records it but it is missing or differs.
+func recorded(file, what, want string) (bool, error) {
+	if want == "" {
 		return false, nil
 	}
-	sb, err := os.ReadFile(scans)
+	b, err := os.ReadFile(file)
 	if os.IsNotExist(err) {
-		return false, fmt.Errorf("the manifest records a scans file the release does not have")
+		return false, fmt.Errorf("the manifest records a %s file the release does not have", what)
 	}
 	if err != nil {
 		return false, err
 	}
-	sum := sha256.Sum256(sb)
-	if hex.EncodeToString(sum[:]) != mf.ScansSHA256 {
-		return false, fmt.Errorf("scans file does not match the manifest's sha256")
+	sum := sha256.Sum256(b)
+	if hex.EncodeToString(sum[:]) != want {
+		return false, fmt.Errorf("%s file does not match the manifest's sha256", what)
 	}
 	return true, nil
 }

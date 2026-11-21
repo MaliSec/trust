@@ -28,14 +28,15 @@
 </html>
 {{end}}
 
-{{define "counts"}}<span class="counts">{{if .KEV}}<b class="sev kev">{{.KEV}} KEV</b> {{end}}{{if .Critical}}<b class="sev critical">{{.Critical}} C</b> {{end}}{{if .High}}<b class="sev high">{{.High}} H</b> {{end}}{{if .Medium}}<b class="sev medium">{{.Medium}} M</b> {{end}}{{if .Low}}<b class="sev low">{{.Low}} L</b> {{end}}{{if .Negligible}}<b class="sev negligible">{{.Negligible}} N</b> {{end}}{{if .Unknown}}<b class="sev unknown">{{.Unknown}} ?</b> {{end}}{{if not .Total}}<span class="none">none</span>{{end}}</span>{{end}}
+{{define "counts"}}<span class="counts">{{if .KEV}}<b class="sev kev">{{.KEV}} KEV</b> {{end}}{{if .Critical}}<b class="sev critical">{{.Critical}} C</b> {{end}}{{if .High}}<b class="sev high">{{.High}} H</b> {{end}}{{if .Medium}}<b class="sev medium">{{.Medium}} M</b> {{end}}{{if .Low}}<b class="sev low">{{.Low}} L</b> {{end}}{{if .Negligible}}<b class="sev negligible">{{.Negligible}} N</b> {{end}}{{if .Unknown}}<b class="sev unknown">{{.Unknown}} ?</b> {{end}}{{if not .Total}}<span class="none">none open</span>{{end}}{{if .Reviewed}} <span class="reviewed" title="fixed in the shipped package or not affected, per a VEX statement">+{{.Reviewed}} reviewed</span>{{end}}</span>{{end}}
 
 {{define "findings"}}{{if .}}
 <table class="findings">
-<thead><tr><th>Vulnerability</th><th>Severity</th><th>Package</th><th>Fix</th><th>Platforms</th><th>Found by</th></tr></thead>
-<tbody>{{range .}}
-<tr><td><a href="{{cveURL .ID}}">{{.ID}}</a>{{if .KEV}} <b class="sev kev">KEV</b>{{end}}</td>
+<thead><tr><th>Vulnerability</th><th>Severity</th><th>Package</th><th>Fix</th><th>Status</th><th>Platforms</th><th>Found by</th></tr></thead>
+<tbody>{{range .}}{{$f := .}}
+<tr{{if .VEX.Reviewed}} class="is-reviewed"{{end}}><td><a href="{{cveURL .ID}}">{{.ID}}</a>{{if .KEV}} <b class="sev kev">KEV</b>{{end}}</td>
 <td><span class="sev {{.Severity}}">{{.Severity}}</span></td>
 <td><code>{{.Package}} {{.Version}}</code></td><td>{{.Fix}}</td>
+<td>{{with .VEX}}<a class="vex {{.Status}}" href="{{vexURL $f.ID}}" title="{{.Text}}">{{vexLabel .Status}}</a>{{else}}<span class="none">not reviewed</span>{{end}}</td>
 <td>{{join .Platforms ", "}}</td><td>{{join .Scanners ", "}}</td></tr>{{end}}
 </tbody></table>{{else}}<p class="none">No findings.</p>{{end}}{{end}}

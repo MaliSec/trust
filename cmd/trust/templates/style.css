@@ -33,5 +33,11 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .critical { color: var(--critical); } .high { color: var(--high); } .medium { color: var(--medium); }
 .low { color: var(--low); } .negligible, .unknown { color: var(--negligible); } .kev { color: var(--kev); }
 .none, .note { color: var(--muted); }
+.reviewed { color: var(--muted); white-space: nowrap; }
+tr.is-reviewed td { color: var(--muted); }
+.vex { font-weight: 600; white-space: nowrap; }
+.vex.fixed, .vex.not_affected { color: var(--low); }
+.vex.affected { color: var(--high); }
+.vex.under_investigation { color: var(--medium); }
 .tag { font-size: 0.75em; padding: 0.05rem 0.4rem; border: 1px solid var(--line); border-radius: 1rem; }
 footer { color: var(--muted); font-size: 0.85em; margin-top: 3rem; padding-bottom: 2rem; border-top: 1px solid var(--line); }

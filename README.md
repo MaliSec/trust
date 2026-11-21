@@ -8,18 +8,23 @@ Everything on the site comes from signed release records:
 
 - **Releases.** `trust fetch` downloads each release's manifest and
   keeps it only if its signature names Temper's release workflow at that
-  release's tag. A release's scans file is kept only if it matches the
-  sha256 its manifest records. A release that fails either check stops the
-  build.
+  release's tag. A release's scans and VEX files are kept only if they
+  match the sha256 its manifest records. A release that fails any check
+  stops the build.
 - **Findings at release.** From the scans file: every finding both
   scanners (Grype and Trivy) reported when the release was cut. Releases
   before 2026.11.21 recorded counts only.
 - **Findings now.** `trust rescan` scans the newest release's images
   against today's scanner databases, using each platform's SBOM from its
   attestation, verified against the same release workflow.
+- **Status.** Temper's [VEX statements](https://github.com/MaliSec/temper/tree/main/vex),
+  from the release's VEX file. A finding a statement shows is fixed in the
+  shipped package or does not affect the image is counted as reviewed,
+  not open; the scanners' own findings stay listed.
 
-The site is rebuilt daily at 04:47 UTC, after Temper's nightly release,
-and the HTML and the JSON feed (`/api/`) are rendered from the same data.
+Each Temper release rebuilds the site when it is published, and a daily
+run (04:47 UTC) rescans the newest release. The HTML and the JSON feed
+(`/api/`) are rendered from the same data.
 
 ## Build locally
 
@@ -44,7 +49,9 @@ Open `site/index.html`.
 - `api/releases/<release>.json`: one release's images and counts.
 
 A finding is one vulnerability in one package, across both platforms and
-both scanners, at the higher severity when the scanners disagree.
+both scanners, at the higher severity when the scanners disagree. A
+statement applies to a finding with the same vulnerability (or an alias),
+image repository and exact package version.
 
 ## License
 

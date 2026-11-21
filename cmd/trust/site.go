@@ -8,12 +8,15 @@ import (
 
 var severityRank = map[string]int{"critical": 5, "high": 4, "medium": 3, "low": 2, "negligible": 1, "unknown": 0}
 
-// Count is the number of distinct findings (vulnerability and package) by
-// severity, across platforms and scanners.
+// Count is the number of distinct findings (vulnerability and package)
+// across platforms and scanners: open findings by severity, and those a
+// VEX statement shows the image is not exposed to (fixed, not affected).
 type Count struct {
 	Critical, High, Medium, Low, Negligible, Unknown, KEV int
+	Reviewed                                              int
 }
 
+// Total is the number of open findings.
 func (c Count) Total() int {
 	return c.Critical + c.High + c.Medium + c.Low + c.Negligible + c.Unknown
 }
@@ -31,6 +34,7 @@ type Finding struct {
 	FixedIn   []string `json:"fixed_in,omitempty"`
 	Platforms []string `json:"platforms"`
 	Scanners  []string `json:"scanners"`
+	VEX       *VEXInfo `json:"vex,omitempty"`
 }
 
 type Entry struct {
@@ -113,7 +117,7 @@ func build(project, sourceRepo, generatedAt string, releases []Release, rescan *
 		}
 		e.AtRelease, e.AtReleaseCount, e.AtReleaseDetail = atRelease(current, name)
 		if rescan != nil && rescan.Release == current.Tag {
-			e.Now = group(rescan.Findings[name])
+			e.Now = group(withVEX(rescan.Findings[name], current.VEX, mi.Repository))
 			e.NowCount = count(e.Now)
 		}
 		for _, r := range releases {
@@ -173,6 +177,23 @@ func atRelease(r Release, name string) ([]Finding, Count, bool) {
 	return nil, c, false
 }
 
+// withVEX: the findings with the release's statement on each, if any.
+func withVEX(byArch map[string]map[string][]RawFinding, doc *VEXDoc, repository string) map[string]map[string][]RawFinding {
+	out := map[string]map[string][]RawFinding{}
+	for arch, byScanner := range byArch {
+		out[arch] = map[string][]RawFinding{}
+		for scanner, fs := range byScanner {
+			cp := make([]RawFinding, len(fs))
+			for i, f := range fs {
+				f.VEX = doc.lookup(repository, f)
+				cp[i] = f
+			}
+			out[arch][scanner] = cp
+		}
+	}
+	return out
+}
+
 // group merges per-platform, per-scanner findings into one row per
 // vulnerability and package. Scanners that disagree on severity are shown
 // at the higher one.
@@ -196,6 +217,10 @@ func group(byArch map[string]map[string][]RawFinding) []Finding {
 				row.FixedIn = union(row.FixedIn, f.FixedIn...)
 				row.Platforms = union(row.Platforms, arch)
 				row.Scanners = union(row.Scanners, scanner)
+				if row.VEX == nil && f.VEX != nil {
+					v := *f.VEX
+					row.VEX = &v
+				}
 				if f.FixState == "wont-fix" || f.Status == "will_not_fix" {
 					row.Fix = "won't fix"
 				}
@@ -205,6 +230,8 @@ func group(byArch map[string]map[string][]RawFinding) []Finding {
 	out := make([]Finding, 0, len(rows))
 	for _, r := range rows {
 		switch {
+		case r.VEX != nil && r.VEX.Status == "fixed":
+			r.Fix = "fixed in the shipped package"
 		case len(r.FixedIn) > 0:
 			r.Fix = "fixed in " + strings.Join(r.FixedIn, ", ")
 		case r.Fix == "":
@@ -214,6 +241,9 @@ func group(byArch map[string]map[string][]RawFinding) []Finding {
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i], out[j]
+		if a.VEX.Reviewed() != b.VEX.Reviewed() {
+			return !a.VEX.Reviewed()
+		}
 		if a.KEV != b.KEV {
 			return a.KEV
 		}
@@ -231,6 +261,10 @@ func group(byArch map[string]map[string][]RawFinding) []Finding {
 func count(fs []Finding) Count {
 	var c Count
 	for _, f := range fs {
+		if f.VEX.Reviewed() {
+			c.Reviewed++
+			continue
+		}
 		switch f.Severity {
 		case "critical":
 			c.Critical++
