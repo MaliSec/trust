@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -82,10 +83,19 @@ func rescan(ctx context.Context, src Source, data string, jobs int) error {
 	}
 
 	ts := rescanTargets(current)
+	if len(ts) == 0 {
+		return fmt.Errorf("release %s lists no platform images", current.Tag)
+	}
+	// The first verification alone: gh downloads and caches Sigstore's
+	// trust root on first use, and parallel first uses collide on that cache.
+	if err := sbomAndGrype(ctx, src, ts[0], sboms, out); err != nil {
+		return err
+	}
 	trivyQ := make(chan target, len(ts))
 	sem := make(chan struct{}, jobs)
 	var wg sync.WaitGroup
-	for _, t := range ts {
+	trivyQ <- ts[0]
+	for _, t := range ts[1:] {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -133,8 +143,23 @@ func rescan(ctx context.Context, src Source, data string, jobs int) error {
 func sbomPath(dir string, t target) string { return filepath.Join(dir, t.name+"."+t.arch+".spdx.json") }
 
 func sbomAndGrype(ctx context.Context, src Source, t target, sboms, out string) error {
-	res, err := command(ctx, "gh", "attestation", "verify", "oci://"+t.repo+"@"+t.digest, "-R", src.Repo,
-		"--signer-workflow", src.Repo+"/"+src.SignerWorkflow, "--predicate-type", sbomPredicate, "--format", "json")
+	args := []string{"attestation", "verify", "oci://" + t.repo + "@" + t.digest, "-R", src.Repo,
+		"--signer-workflow", src.Repo + "/" + src.SignerWorkflow, "--predicate-type", sbomPredicate, "--format", "json"}
+	var res []byte
+	var err error
+	// A verifier that cannot initialise (trust root or registry unreachable
+	// for a moment) is retried; a failed verification is not.
+	for attempt := 1; attempt <= 3; attempt++ {
+		res, err = command(ctx, "gh", args...)
+		if err == nil || !strings.Contains(err.Error(), "no valid Sigstore verifiers could be initialized") {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * 5 * time.Second):
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("no verified SBOM for %s/%s (%s): %w", t.name, t.arch, t.digest, err)
 	}
