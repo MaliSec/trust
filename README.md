@@ -4,7 +4,8 @@ A public record of every [Temper](https://github.com/MaliSec/temper)
 release: each image's digest and tags, how to verify it, and its
 vulnerability findings at release time and as of today.
 
-Everything on the site comes from signed release records:
+Images, digests and findings come from signed release records; VEX
+statements come from Temper's main branch:
 
 - **Releases.** `trust fetch` downloads each release's manifest and
   keeps it only if its signature names Temper's release workflow at that
@@ -17,13 +18,17 @@ Everything on the site comes from signed release records:
 - **Findings now.** `trust rescan` scans the newest release's images
   against today's scanner databases, using each platform's SBOM from its
   attestation, verified against the same release workflow.
-- **Status.** Temper's [VEX statements](https://github.com/MaliSec/temper/tree/main/vex),
-  from the release's VEX file. A finding a statement shows is fixed in the
-  shipped package or does not affect the image is counted as reviewed,
-  not open; the scanners' own findings stay listed.
+- **Status.** Temper's [VEX statements](https://github.com/MaliSec/temper/tree/main/vex)
+  as of one commit of its main branch, which the site names; they reach
+  main only through reviewed pull requests. They apply to every release,
+  so a statement made after a release covers it too. A finding a statement
+  shows is fixed in the shipped package or does not affect the image is
+  counted as reviewed, not open; the scanners' own findings stay listed.
+  Each release also carries the statements as of its cut, in its signed
+  VEX file.
 
-Each Temper release rebuilds the site when it is published, and a daily
-run (04:47 UTC) rescans the newest release. The HTML and the JSON feed
+Each Temper release, and each change to Temper's `vex/`, rebuilds the site.
+A daily run (04:47 UTC) rescans the newest release. The HTML and the JSON feed
 (`/api/`) are rendered from the same data.
 
 ## Build locally
@@ -35,8 +40,10 @@ Needs Go, `gh`, `cosign`, `grype` and `trivy` (Temper's
 go build -o bin/trust ./cmd/trust
 ./bin/trust fetch
 ./bin/trust rescan
-./bin/trust build
+./bin/trust build -vex ../temper/vex -vex-commit "$(git -C ../temper rev-parse HEAD)"
 ```
+
+Without `-vex`, each release shows the statements in its own VEX file.
 
 Open `site/index.html`.
 

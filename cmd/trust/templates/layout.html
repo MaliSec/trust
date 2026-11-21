@@ -20,7 +20,9 @@
   <p>Built {{.Site.GeneratedAt}} from signed releases of
   <a href="https://github.com/{{.Site.SourceRepo}}">{{.Site.SourceRepo}}</a>.
   {{with .Site.Rescan}}Current findings: rescanned {{.ScannedAt}} with
-  {{range $name, $s := .Scanners}}{{$name}} {{$s.Version}} ({{$s.DB}}); {{end}}{{end}}</p>
+  {{range $name, $s := .Scanners}}{{$name}} {{$s.Version}} ({{$s.DB}}); {{end}}{{end}}
+  {{with .Site.VEX}}VEX statements, for every release:
+  <a href="https://github.com/{{.Repo}}/tree/{{.Commit}}/vex">vex/ at {{short .Commit}}</a>.{{end}}</p>
   <p>Scanners check the packages in each image's SBOM; files that no package
   installed are not scanned.</p>
 </footer>

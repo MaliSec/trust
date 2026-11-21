@@ -1,6 +1,8 @@
 # trust-center: rebuild the site from Temper's signed releases, rescan the
-# newest release's images against today's scanner databases, and publish
-# to GitHub Pages. Runs after temper-nightly has released, and on demand.
+# newest release's images against today's scanner databases, apply Temper's
+# current VEX statements to every release, and publish to GitHub Pages.
+# Temper starts it after each release and each change to its vex/; it also
+# runs daily and on demand.
 #
 # Actions are pinned to commit SHAs; the comment beside each names the release.
 name: trust-center
@@ -27,7 +29,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Temper's install-tools.sh pins the scanner versions its releases use.
+      # Temper's install-tools.sh pins the scanner versions its releases use;
+      # its vex/ holds the current VEX statements.
       - name: Checkout Temper
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,8 +59,14 @@ jobs:
       - name: Rescan the newest release
         run: ./bin/trust rescan -repo "$SOURCE_REPO" -data data/temper
 
+      - name: Check Temper's VEX statements
+        working-directory: temper
+        run: ./scripts/vex-check.sh vex images
+
       - name: Render
-        run: ./bin/trust build -repo "$SOURCE_REPO" -data data/temper -out site
+        run: |
+          ./bin/trust build -repo "$SOURCE_REPO" -data data/temper -out site \
+            -vex temper/vex -vex-commit "$(git -C temper rev-parse HEAD)"
 
       - name: Upload the site
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

@@ -7,6 +7,11 @@
 //	trust fetch  [-data DIR]            download and verify every release
 //	trust rescan [-data DIR] [-jobs N]  scan the newest release's SBOMs today
 //	trust build  [-data DIR] [-out DIR] render the site and the feed
+//	             [-vex DIR -vex-commit SHA]
+//
+// With -vex (the source's vex/ directory, checked out at -vex-commit), the
+// statements there apply to every release, including those cut before a
+// statement was made. Without it, each release shows its own VEX document.
 //
 // Common flags: -repo (MaliSec/temper), -workflow (the release workflow),
 // -prefix (release asset prefix), -project (display name).
@@ -21,6 +26,7 @@ import (
 	"html/template"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -42,6 +48,8 @@ func main() {
 	project := fs.String("project", "Temper", "project name")
 	out := fs.String("out", "site", "output directory (build)")
 	jobs := fs.Int("jobs", 4, "parallel SBOM fetches and Grype scans (rescan)")
+	vexDir := fs.String("vex", "", "the source's vex/ directory, applied to every release (build)")
+	vexCommit := fs.String("vex-commit", "", "the source commit -vex is checked out at (build)")
 	_ = fs.Parse(os.Args[2:])
 	src := Source{Repo: *repo, SignerWorkflow: *workflow, Prefix: *prefix}
 	ctx := context.Background()
@@ -52,7 +60,7 @@ func main() {
 	case "rescan":
 		err = rescan(ctx, src, *data, max(1, *jobs))
 	case "build":
-		err = run(*data, *out, *project, *repo, time.Now().UTC())
+		err = run(*data, *out, *project, *repo, *vexDir, *vexCommit, time.Now().UTC())
 	default:
 		err = fmt.Errorf("unknown command %q (fetch, rescan, build)", cmd)
 	}
@@ -62,7 +70,21 @@ func main() {
 	}
 }
 
-func run(data, out, project, repo string, now time.Time) error {
+var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+func run(data, out, project, repo, vexDir, vexCommit string, now time.Time) error {
+	var current *VEXDoc
+	var vexSrc *VEXSource
+	if vexDir != "" {
+		if !commitSHA.MatchString(vexCommit) {
+			return fmt.Errorf("-vex needs -vex-commit, the full commit SHA it is checked out at")
+		}
+		var err error
+		if current, err = loadVEXDir(vexDir); err != nil {
+			return err
+		}
+		vexSrc = &VEXSource{Repo: repo, Commit: vexCommit}
+	}
 	releases, err := loadReleases(data)
 	if err != nil {
 		return err
@@ -77,11 +99,15 @@ func run(data, out, project, repo string, now time.Time) error {
 	if rescan != nil && rescan.Release != releases[0].Tag {
 		return fmt.Errorf("rescan is of %s, the newest release is %s", rescan.Release, releases[0].Tag)
 	}
-	s := build(project, repo, now.Format(time.RFC3339), releases, rescan)
+	s := build(project, repo, now.Format(time.RFC3339), releases, rescan, current, vexSrc)
 
+	ref := "main"
+	if vexSrc != nil {
+		ref = vexSrc.Commit
+	}
 	fm := template.FuncMap{
 		// The VEX statements for a vulnerability, in the source repository.
-		"vexURL": func(id string) string { return "https://github.com/" + repo + "/blob/main/vex/" + id + ".json" },
+		"vexURL": func(id string) string { return "https://github.com/" + repo + "/blob/" + ref + "/vex/" + id + ".json" },
 	}
 	for k, v := range funcs {
 		fm[k] = v
@@ -138,13 +164,14 @@ func indexJSON(s *Site) any {
 		AtRelease Count  `json:"count_at_release"`
 	}
 	type doc struct {
-		Project     string   `json:"project"`
-		GeneratedAt string   `json:"generated_at"`
-		Rescan      *Rescan  `json:"rescan,omitempty"`
-		Lines       []line   `json:"lines"`
-		Releases    []string `json:"releases"`
+		Project     string     `json:"project"`
+		GeneratedAt string     `json:"generated_at"`
+		Rescan      *Rescan    `json:"rescan,omitempty"`
+		VEX         *VEXSource `json:"vex,omitempty"`
+		Lines       []line     `json:"lines"`
+		Releases    []string   `json:"releases"`
 	}
-	d := doc{Project: s.Project, GeneratedAt: s.GeneratedAt, Rescan: s.Rescan}
+	d := doc{Project: s.Project, GeneratedAt: s.GeneratedAt, Rescan: s.Rescan, VEX: s.VEX}
 	for _, img := range s.Images {
 		for _, e := range img.Entries {
 			l := line{Image: img.Name, Name: e.Name, Line: e.Line, Release: e.Release, Digest: e.Digest, AtRelease: e.AtReleaseCount}

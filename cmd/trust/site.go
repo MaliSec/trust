@@ -90,39 +90,49 @@ type Site struct {
 	SourceRepo  string // MaliSec/temper
 	GeneratedAt string
 	Rescan      *Rescan
+	VEX         *VEXSource // nil: each release's own VEX document
 	Images      []*Image
 	Releases    []ReleaseView
 }
 
-func build(project, sourceRepo, generatedAt string, releases []Release, rescan *Rescan) *Site {
-	s := &Site{Project: project, SourceRepo: sourceRepo, GeneratedAt: generatedAt, Rescan: rescan}
+// build assembles the site. With current statements (the source's vex/ at
+// one commit), every release's findings carry them, so a statement made
+// after a release applies to it; without, each release's own VEX document.
+func build(project, sourceRepo, generatedAt string, releases []Release, rescan *Rescan, current *VEXDoc, vexSrc *VEXSource) *Site {
+	s := &Site{Project: project, SourceRepo: sourceRepo, GeneratedAt: generatedAt, Rescan: rescan, VEX: vexSrc}
+	vexFor := func(r Release) *VEXDoc {
+		if current != nil {
+			return current
+		}
+		return r.VEX
+	}
 	if len(releases) == 0 {
 		return s
 	}
 	byRepo := map[string]*Image{}
-	current := releases[0]
-	for name, mi := range current.Manifest.Images {
+	newest := releases[0]
+	for name, mi := range newest.Manifest.Images {
 		repo := path.Base(mi.Repository)
 		img := byRepo[repo]
 		if img == nil {
 			img = &Image{Name: repo, Repository: mi.Repository, FIPS: strings.HasSuffix(repo, "-fips")}
 			byRepo[repo] = img
 		}
-		e := &Entry{Name: name, Line: mi.Line, Release: current.Tag, Digest: mi.Digest, Platforms: mi.Platforms}
+		e := &Entry{Name: name, Line: mi.Line, Release: newest.Tag, Digest: mi.Digest, Platforms: mi.Platforms}
 		if mi.Primary {
-			e.Tags = append(e.Tags, current.Tag)
+			e.Tags = append(e.Tags, newest.Tag)
 		}
 		if mi.LineTag != "" {
 			e.Tags = append(e.Tags, mi.LineTag)
 		}
-		e.AtRelease, e.AtReleaseCount, e.AtReleaseDetail = atRelease(current, name)
-		if rescan != nil && rescan.Release == current.Tag {
-			e.Now = group(withVEX(rescan.Findings[name], current.VEX, mi.Repository))
+		e.AtRelease, e.AtReleaseCount, e.AtReleaseDetail = atRelease(newest, name, vexFor(newest))
+		if rescan != nil && rescan.Release == newest.Tag {
+			e.Now = group(withVEX(rescan.Findings[name], vexFor(newest), mi.Repository))
 			e.NowCount = count(e.Now)
 		}
 		for _, r := range releases {
 			if ri, ok := r.Manifest.Images[name]; ok {
-				_, c, _ := atRelease(r, name)
+				_, c, _ := atRelease(r, name, vexFor(r))
 				e.History = append(e.History, HistoryRow{Release: r.Tag, Digest: ri.Digest, CutAt: r.Manifest.CutAt, Count: c})
 			}
 		}
@@ -139,7 +149,7 @@ func build(project, sourceRepo, generatedAt string, releases []Release, rescan *
 		rv := ReleaseView{Tag: r.Tag, CutAt: r.Manifest.CutAt, Commit: r.Manifest.GitCommit,
 			ScanDB: []string{r.Manifest.ScanDB, r.Manifest.ScanDBTrivy}, HasScans: r.Scans != nil}
 		for name, mi := range r.Manifest.Images {
-			_, c, _ := atRelease(r, name)
+			_, c, _ := atRelease(r, name, vexFor(r))
 			rv.Entries = append(rv.Entries, ReleaseEntry{Name: name, Repository: mi.Repository, Digest: mi.Digest, Count: c})
 		}
 		sort.Slice(rv.Entries, func(i, j int) bool { return rv.Entries[i].Name < rv.Entries[j].Name })
@@ -148,9 +158,10 @@ func build(project, sourceRepo, generatedAt string, releases []Release, rescan *
 	return s
 }
 
-// atRelease: the release-time findings from the scans file, or, for a
-// release without one, the highest per-platform counts in the manifest.
-func atRelease(r Release, name string) ([]Finding, Count, bool) {
+// atRelease: the release-time findings from the scans file, with doc's
+// statements, or, for a release without one, the highest per-platform
+// counts in the manifest.
+func atRelease(r Release, name string, doc *VEXDoc) ([]Finding, Count, bool) {
 	if r.Scans != nil {
 		img, ok := r.Scans.Images[name]
 		if !ok {
@@ -159,6 +170,9 @@ func atRelease(r Release, name string) ([]Finding, Count, bool) {
 		byArch := map[string]map[string][]RawFinding{}
 		for arch, p := range img.Platforms {
 			byArch[arch] = map[string][]RawFinding{"grype": p.Grype, "trivy": p.Trivy}
+		}
+		if doc != nil {
+			byArch = withVEX(byArch, doc, r.Manifest.Images[name].Repository)
 		}
 		fs := group(byArch)
 		return fs, count(fs), true
@@ -177,7 +191,7 @@ func atRelease(r Release, name string) ([]Finding, Count, bool) {
 	return nil, c, false
 }
 
-// withVEX: the findings with the release's statement on each, if any.
+// withVEX: the findings with doc's statement on each, if any.
 func withVEX(byArch map[string]map[string][]RawFinding, doc *VEXDoc, repository string) map[string]map[string][]RawFinding {
 	out := map[string]map[string][]RawFinding{}
 	for arch, byScanner := range byArch {

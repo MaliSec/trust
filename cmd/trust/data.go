@@ -119,6 +119,44 @@ type VEXDoc struct {
 	} `json:"statements"`
 }
 
+// VEXSource is where the statements applied to every release come from:
+// the source repository's vex/ directory at one commit.
+type VEXSource struct {
+	Repo   string `json:"repository"`
+	Commit string `json:"commit"`
+}
+
+// loadVEXDir merges every OpenVEX document in dir (Temper's vex/) into
+// one, as Temper's scripts/vex-merge.sh does for a release.
+func loadVEXDir(dir string) (*VEXDoc, error) {
+	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no VEX documents in %s", dir)
+	}
+	doc := &VEXDoc{}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		var d struct {
+			Context string `json:"@context"`
+			VEXDoc
+		}
+		if err := json.Unmarshal(b, &d); err != nil {
+			return nil, fmt.Errorf("%s: %w", f, err)
+		}
+		if d.Context != "https://openvex.dev/ns/v0.2.0" {
+			return nil, fmt.Errorf("%s: not an OpenVEX v0.2.0 document", f)
+		}
+		doc.Statements = append(doc.Statements, d.Statements...)
+	}
+	return doc, nil
+}
+
 // lookup returns the statement covering a finding: same vulnerability (or
 // one of its aliases), the image's repository, and the finding's Wolfi
 // package at its exact version. It matches Temper's scripts/scans-json.sh.

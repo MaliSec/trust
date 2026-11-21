@@ -266,3 +266,66 @@ func TestRescanName(t *testing.T) {
 		}
 	}
 }
+
+// Current statements (-vex) apply to every release, including one cut
+// before the statement existed, and take the place of a release's own
+// VEX document; without them, a release keeps its own.
+func TestCurrentVEX(t *testing.T) {
+	const repo = "ghcr.io/malisec/temper/python"
+	scans := func() *Scans {
+		var s Scans
+		must(t, json.Unmarshal([]byte(`{"images": {"python": {"platforms": {"amd64": {"grype": [
+		  {"id": "CVE-1", "severity": "medium", "package": {"name": "python-3.14", "version": "3.14.10-r0", "type": "apk"}, "fixed_in": []},
+		  {"id": "CVE-2", "severity": "low", "package": {"name": "python-3.14", "version": "3.14.10-r0", "type": "apk"}, "fixed_in": []}]}}}}}`), &s))
+		return &s
+	}
+	stmt := func(id, status string) string {
+		return `{"vulnerability": {"name": "` + id + `"}, "status": "` + status + `", "status_notes": "n",
+		  "products": [{"@id": "pkg:oci/python?repository_url=` + repo + `",
+		                "subcomponents": [{"@id": "pkg:apk/wolfi/python-3.14@3.14.10-r0"}]}]}`
+	}
+	var snapshot VEXDoc
+	must(t, json.Unmarshal([]byte(`{"statements": [`+stmt("CVE-2", "fixed")+`]}`), &snapshot))
+	rel := func(tag string, vex *VEXDoc) Release {
+		return Release{Tag: tag, Scans: scans(), VEX: vex,
+			Manifest: Manifest{Images: map[string]ManifestImage{"python": {Repository: repo, Primary: true}}}}
+	}
+	releases := []Release{rel("2026.11.22", nil), rel("2026.11.21", &snapshot)}
+
+	dir := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(dir, "CVE-1.json"), []byte(`{"@context": "https://openvex.dev/ns/v0.2.0",
+	  "statements": [`+stmt("CVE-1", "fixed")+`]}`), 0o644))
+	current, err := loadVEXDir(dir)
+	must(t, err)
+
+	reviewed := func(s *Site) map[string]int {
+		m := map[string]int{}
+		for _, r := range s.Releases {
+			m[r.Tag] = r.Entries[0].Count.Reviewed
+		}
+		return m
+	}
+	src := &VEXSource{Repo: "MaliSec/temper", Commit: "c"}
+	// CVE-1 from vex/ in both releases; the old release's snapshot (CVE-2) is replaced.
+	if got := reviewed(build("T", "MaliSec/temper", "now", releases, nil, current, src)); got["2026.11.21"] != 1 || got["2026.11.22"] != 1 {
+		t.Errorf("with current statements: reviewed = %v", got)
+	}
+	// Without, each release has its own: CVE-2 in the old one, none in the new.
+	if got := reviewed(build("T", "MaliSec/temper", "now", releases, nil, nil, nil)); got["2026.11.21"] != 1 || got["2026.11.22"] != 0 {
+		t.Errorf("without: reviewed = %v", got)
+	}
+	s := build("T", "MaliSec/temper", "now", releases, nil, current, src)
+	for _, f := range s.Images[0].Entries[0].AtRelease {
+		if (f.ID == "CVE-1") != f.VEX.Reviewed() {
+			t.Errorf("%s: vex = %+v", f.ID, f.VEX)
+		}
+	}
+
+	must(t, os.WriteFile(filepath.Join(dir, "bad.json"), []byte(`{"statements": []}`), 0o644))
+	if _, err := loadVEXDir(dir); err == nil {
+		t.Error("a document without the OpenVEX context was accepted")
+	}
+	if _, err := loadVEXDir(t.TempDir()); err == nil {
+		t.Error("an empty vex/ was accepted")
+	}
+}
