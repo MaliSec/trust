@@ -25,6 +25,8 @@ type Source struct {
 
 // signerIdentity is the only certificate identity a release's manifest
 // signature is accepted from: the release workflow, at that release's tag.
+// The workflow is reusable, so the identity alone does not show which
+// repository ran it; verifyRelease also requires src.Repo as the source.
 func (s Source) signerIdentity(tag string) string {
 	return "^" + regexp.QuoteMeta("https://github.com/"+s.Repo+"/"+s.SignerWorkflow+"@refs/tags/"+tag) + "$"
 }
@@ -120,7 +122,8 @@ func verifyRelease(ctx context.Context, src Source, tag, manifest, scans, vex st
 	}
 	if _, err := command(ctx, "cosign", "verify-blob", "--bundle", manifest+".sigstore.json",
 		"--certificate-identity-regexp", src.signerIdentity(tag),
-		"--certificate-oidc-issuer", oidcIssuer, manifest); err != nil {
+		"--certificate-oidc-issuer", oidcIssuer,
+		"--certificate-github-workflow-repository", src.Repo, manifest); err != nil {
 		return kept{}, fmt.Errorf("manifest signature does not verify: %w", err)
 	}
 	b, err := os.ReadFile(manifest)

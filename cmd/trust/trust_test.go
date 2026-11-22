@@ -175,6 +175,9 @@ func TestVerifyRelease(t *testing.T) {
 			if c.bundle && !slices.Contains(gotArgs, src.signerIdentity("2026.11.21")) {
 				t.Fatalf("cosign not called with the release identity: %v", gotArgs)
 			}
+			if i := slices.Index(gotArgs, "--certificate-github-workflow-repository"); c.bundle && (i < 0 || i+1 >= len(gotArgs) || gotArgs[i+1] != src.Repo) {
+				t.Fatalf("cosign not called with the source repository: %v", gotArgs)
+			}
 		})
 	}
 }
